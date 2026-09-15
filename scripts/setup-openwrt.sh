@@ -190,6 +190,32 @@ blacklist ppp_generic
 blacklist pppoe
 BLACKLIST
 
+NETWORK_CFG="$BUILD/network"
+cat > "$NETWORK_CFG" <<'NET'
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'eth0'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'dhcp'
+NET
+
+DROPBEAR_CFG="$BUILD/dropbear"
+cat > "$DROPBEAR_CFG" <<'DB'
+config dropbear
+	option PasswordAuth 'off'
+	option RootPasswordAuth 'off'
+	option Port '22'
+DB
+
 echo -e "${BLUE}🧩 Injecting first-boot config into ext4 rootfs...${NC}"
 GPT_INFO="$(python3 - "$IMG" <<'PY'
 import struct, sys
@@ -218,32 +244,56 @@ P2_START="${GPT_INFO%% *}"
 P2_COUNT="${GPT_INFO##* }"
 ROOTFS="$BUILD/rootfs.img"
 dd if="$IMG" of="$ROOTFS" bs=512 skip="$P2_START" count="$P2_COUNT" status=none || fail_soft "failed to extract rootfs partition"
+"$DEBUGFS" -R "stats" "$ROOTFS" >/dev/null 2>&1 || fail_soft "extracted rootfs is not a readable ext4 image"
+
+# macOS getopt stops at the first non-option. -R/-w MUST come before the image.
+dfs() {
+    "$DEBUGFS" -w -R "$1" "$ROOTFS"
+}
 
 inject_file() {
     local src
     src="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
     local dest="$2"
     local mode="$3"
-    "$DEBUGFS" -w "$ROOTFS" -R "unlink $dest" >/dev/null 2>&1
-    "$DEBUGFS" -w "$ROOTFS" -R "write $src $dest" >/dev/null 2>&1
-    "$DEBUGFS" -w "$ROOTFS" -R "sif $dest mode $mode" >/dev/null 2>&1
+    dfs "rm $dest" >/dev/null 2>&1
+    dfs "unlink $dest" >/dev/null 2>&1
+    if ! dfs "write $src $dest" >/dev/null; then
+        fail_soft "debugfs write failed for $dest"
+    fi
+    dfs "sif $dest mode $mode" >/dev/null 2>&1
 }
 
-"$DEBUGFS" -w "$ROOTFS" -R "mkdir /etc/uci-defaults" >/dev/null 2>&1
-"$DEBUGFS" -w "$ROOTFS" -R "mkdir /etc/dropbear" >/dev/null 2>&1
-"$DEBUGFS" -w "$ROOTFS" -R "mkdir /etc/modprobe.d" >/dev/null 2>&1
+dfs "mkdir /etc/uci-defaults" >/dev/null 2>&1
+dfs "mkdir /etc/dropbear" >/dev/null 2>&1
+dfs "mkdir /etc/modprobe.d" >/dev/null 2>&1
 inject_file "$BOOTSTRAP" "/etc/uci-defaults/99-mac-bootstrap" 0100755
 inject_file "$SSH_KEY.pub" "/etc/dropbear/authorized_keys" 0100600
 inject_file "$BLACKLIST" "/etc/modprobe.d/00-gha-virt-blacklist.conf" 0100644
+inject_file "$NETWORK_CFG" "/etc/config/network" 0100644
+inject_file "$DROPBEAR_CFG" "/etc/config/dropbear" 0100644
+
+VERIFY="$("$DEBUGFS" -R "cat /etc/config/network" "$ROOTFS" 2>/dev/null)"
+if ! echo "$VERIFY" | grep -q "option proto 'dhcp'"; then
+    echo "$VERIFY"
+    fail_soft "network config was not written into the OpenWrt rootfs"
+fi
+VERIFY_KEY="$("$DEBUGFS" -R "stat /etc/dropbear/authorized_keys" "$ROOTFS" 2>/dev/null)"
+if ! echo "$VERIFY_KEY" | grep -qi "type: regular"; then
+    echo "$VERIFY_KEY"
+    fail_soft "authorized_keys was not written into the OpenWrt rootfs"
+fi
+echo -e "${GREEN}✅ Rootfs injection verified (DHCP + SSH key)${NC}"
 
 if [ "$STRIP_ARM_KMODS" = "1" ]; then
     echo -e "${BLUE}🧹 Stripping ARM server NIC autoload (avoids TCG boot stalls)...${NC}"
     MODULE_LIST="$("$DEBUGFS" -R "ls -p /etc/modules.d" "$ROOTFS" 2>/dev/null)"
-    echo "$MODULE_LIST" | tr '/' '\n' | while read -r name; do
+    echo "$MODULE_LIST" | awk -F/ '{print $6}' | while read -r name; do
         [ -z "$name" ] && continue
         case "$name" in
+            .|..) continue ;;
             *macsec*|*vmxnet3*|*thunder*|*rvu*|*nicpf*|*nicvf*|*e1000*|*ppp*|*octeon*|*marvell*|*cavium*|*ena*|*ixgbe*|*i40e*|*mlx*|*bnxt*|*qede*|*tg3*|*sfc*|*bcm*|*mvneta*|*mvpp2*|*stmmac*|*dwmac*|*atlantic*|*aquantia*|*realtek*|*smsc*|*phylib*|*enetc*|*dpaa*)
-                "$DEBUGFS" -w "$ROOTFS" -R "unlink /etc/modules.d/$name" >/dev/null 2>&1
+                dfs "unlink /etc/modules.d/$name" >/dev/null 2>&1
                 ;;
         esac
     done
@@ -287,12 +337,18 @@ SSH_OPTS="-i $SSH_KEY -p $SSH_HOSTPORT -o StrictHostKeyChecking=no -o UserKnownH
 echo -e "${BLUE}⏳ Waiting for OpenWrt SSH (up to ~8 minutes on TCG)...${NC}"
 READY=0
 for i in $(seq 1 96); do
-    if ssh $SSH_OPTS root@127.0.0.1 "test -f /etc/.gha-bootstrap-done && echo READY" 2>/dev/null | grep -q READY; then
+    if ssh $SSH_OPTS root@127.0.0.1 "echo READY" 2>/dev/null | grep -q READY; then
         READY=1
         echo -e "${GREEN}✅ OpenWrt is reachable over SSH${NC}"
         break
     fi
-    printf "\r   waiting... %s/96" "$i"
+    if [ $((i % 12)) -eq 0 ]; then
+        echo ""
+        echo -e "${YELLOW}   still waiting ($i/96). last serial:${NC}"
+        tail -n 8 "$SERIAL_LOG" 2>/dev/null || true
+    else
+        printf "\r   waiting... %s/96" "$i"
+    fi
     sleep 5
 done
 echo ""

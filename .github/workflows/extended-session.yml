@@ -215,6 +215,14 @@ jobs:
             fi
           fi
 
+      - name: 🔓 Allow this session IP on the GCP proxy
+        if: github.event.inputs.openwrt_exit == 'true'
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          chmod +x scripts/allow-gcp-firewall.sh
+          ./scripts/allow-gcp-firewall.sh
+
       - name: 🧭 Boot OpenWrt exit (Safari/Chrome via localhost proxy)
         if: github.event.inputs.openwrt_exit == 'true'
         env:
@@ -252,6 +260,9 @@ jobs:
             OpenWrt IP: ${{ env.OPENWRT_EGRESS_IP || 'n/a' }}
             HTTP proxy: ${{ env.OPENWRT_PROXY || 'n/a' }}
             SOCKS5:     ${{ env.OPENWRT_SOCKS || 'n/a' }}
+          
+          BlackBird (paste this, type HTTP, no user/pass):
+            http://127.0.0.1:13128
           
           ────────────────────────────────────────────────────────────
           🍎 macOS Credentials:

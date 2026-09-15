@@ -419,7 +419,12 @@ fi
 /etc/init.d/firewall reload
 REMOTE
 
-if [ -n "${GCP_PROXY_HOST:-}" ] && [ -n "${GCP_PROXY_PORT:-}" ] && [ -n "${GCP_PROXY_USER:-}" ] && [ -n "${GCP_PROXY_PASS:-}" ]; then
+GCP_PROXY_HOST="${GCP_PROXY_HOST:-35.215.247.149}"
+GCP_PROXY_PORT="${GCP_PROXY_PORT:-443}"
+GCP_PROXY_USER="${GCP_PROXY_USER:-proxy_pool_01}"
+GCP_PROXY_PASS="${GCP_PROXY_PASS:-}"
+
+if [ -n "$GCP_PROXY_HOST" ] && [ -n "$GCP_PROXY_PORT" ] && [ -n "$GCP_PROXY_USER" ] && [ -n "$GCP_PROXY_PASS" ]; then
     echo -e "${BLUE}🔗 Chaining OpenWrt tinyproxy through GCP ${GCP_PROXY_HOST}:${GCP_PROXY_PORT}...${NC}"
     ssh $SSH_OPTS root@127.0.0.1 "cat > /etc/tinyproxy/tinyproxy.conf" <<CFG
 Port 3128

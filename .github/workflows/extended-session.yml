@@ -40,13 +40,21 @@ on:
           - 'large'
           - 'xlarge'
       unique_ip:
-        description: 'Ensure unique IP via Cloudflare WARP VPN'
+        description: 'Ensure unique IP via Cloudflare WARP VPN (ignored when OpenWrt exit is on)'
         required: true
         default: 'false'
         type: choice
         options:
           - 'false'
           - 'true'
+      openwrt_exit:
+        description: 'Boot OpenWrt inside this Mac and send Safari/Chrome through it (Azure IP, no WARP)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
       current_chain:
         description: 'Current chain number (internal use)'
         required: false
@@ -82,7 +90,7 @@ jobs:
           ./scripts/ip-manager.sh
 
       - name: 🔒 Setup Unique IP (Cloudflare WARP)
-        if: github.event.inputs.unique_ip == 'true'
+        if: github.event.inputs.unique_ip == 'true' && github.event.inputs.openwrt_exit != 'true'
         run: |
           chmod +x scripts/setup-warp.sh
           ./scripts/setup-warp.sh
@@ -207,6 +215,12 @@ jobs:
             fi
           fi
 
+      - name: 🧭 Boot OpenWrt exit (Safari/Chrome via localhost proxy)
+        if: github.event.inputs.openwrt_exit == 'true'
+        run: |
+          chmod +x scripts/setup-openwrt.sh
+          ./scripts/setup-openwrt.sh
+
       - name: 💾 Save Credentials (Private File)
         run: |
           mkdir -p credentials
@@ -229,6 +243,10 @@ jobs:
             Location:   ${{ env.IP_CITY }}, ${{ env.IP_COUNTRY }}
             Provider:   ${{ env.IP_ORG }}
             WARP VPN:   ${{ env.WARP_ENABLED || 'false' }}
+            OpenWrt:    ${{ env.OPENWRT_ENABLED || 'false' }}
+            OpenWrt IP: ${{ env.OPENWRT_EGRESS_IP || 'n/a' }}
+            HTTP proxy: ${{ env.OPENWRT_PROXY || 'n/a' }}
+            SOCKS5:     ${{ env.OPENWRT_SOCKS || 'n/a' }}
           
           ────────────────────────────────────────────────────────────
           🍎 macOS Credentials:
@@ -379,6 +397,7 @@ jobs:
                   -f max_chains=${{ env.MAX_CHAINS }} \
                   -f runner_size=${{ github.event.inputs.runner_size }} \
                   -f unique_ip=${{ github.event.inputs.unique_ip }} \
+                  -f openwrt_exit=${{ github.event.inputs.openwrt_exit }} \
                   -f current_chain=${NEXT_CHAIN}
                 
                 triggered_chain=true

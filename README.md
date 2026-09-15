@@ -21,6 +21,7 @@ Turn GitHub Actions runners into remotely accessible Macs. An alternative to ser
 | 📊 **Multiple Sizes** | Standard, Large, XLarge |
 | 🔒 **Secure Credentials** | Passwords never shown in logs |
 | 🌐 **Unique IP Guarantee** | Each session gets a fresh, unique IP via Cloudflare WARP |
+| 🧭 **OpenWrt exit** | Optional OpenWrt VM inside the Mac; Safari/Chrome leave via Azure IP |
 | 📋 **IP Tracking** | Tracks IP history per user to detect duplicates |
 
 ---
@@ -56,6 +57,7 @@ Download from: **https://rustdesk.com/download**
    - **macOS Version**: Choose 14 (Sonoma), 15 (Sequoia), or 26 (Tahoe beta)
    - **Runner size**: Mac size (see table below)
    - **Unique IP**: Enable to guarantee a fresh IP via Cloudflare WARP VPN
+   - **OpenWrt exit**: default **on** — boots OpenWrt inside the Mac and sends Safari/Chrome through it. WARP is skipped in this mode.
 4. Click **"Run workflow"**
 
 ### Step 4: Connect
@@ -161,6 +163,22 @@ The credentials artifact includes:
 ```
 
 > ⚠️ **Note**: Even with "Unique IP" enabled, Cloudflare WARP IPs come from a shared pool. For truly dedicated IPs, consider using a paid VPN service.
+
+---
+
+## 🧭 OpenWrt exit (inside the Mac)
+
+When **OpenWrt exit** is `true` (the default), the job boots an OpenWrt VM with QEMU on the same Apple Silicon runner and points Safari/Chrome at `127.0.0.1:13128`. Traffic from those apps leaves through OpenWrt and still uses the runner's **Azure** public IP. WARP is skipped in this mode so the two tunnels do not fight.
+
+| Path | What happens |
+|------|----------------|
+| Safari / Chrome / most GUI apps | System HTTP/HTTPS proxy → OpenWrt tinyproxy → Azure IP |
+| GitHub Actions / artifact upload | Direct. `HTTP_PROXY` is **not** exported |
+| RustDesk | Direct. SOCKS is left off; GitHub/RustDesk/Apple are in the bypass list |
+
+The first boot can take a few minutes (Homebrew QEMU + OpenWrt). If the VM fails, the script logs a warning and the RustDesk session still starts.
+
+Manual SOCKS5 for a specific app: `127.0.0.1:11080`.
 
 ---
 
@@ -283,7 +301,8 @@ In repositories with multiple collaborators:
 │   ├── keep-alive.sh             # Keeps session active
 │   ├── system-info.sh            # System information
 │   ├── ip-manager.sh             # IP detection and tracking
-│   └── setup-warp.sh             # Cloudflare WARP VPN setup
+│   ├── setup-warp.sh             # Cloudflare WARP VPN setup
+│   └── setup-openwrt.sh          # OpenWrt VM + localhost HTTP proxy
 ├── configs/
 │   └── hardware-tiers.json       # Hardware configurations
 └── README.md
@@ -368,6 +387,9 @@ Workflows use these variables:
 | `IP_CITY` | City location of the IP | Auto-detected |
 | `IP_COUNTRY` | Country of the IP | Auto-detected |
 | `WARP_ENABLED` | Whether Cloudflare WARP VPN is active | false |
+| `OPENWRT_ENABLED` | Whether the in-Mac OpenWrt exit is active | false |
+| `OPENWRT_PROXY` | Local HTTP proxy used by Safari/Chrome | `127.0.0.1:13128` |
+| `OPENWRT_EGRESS_IP` | Public IP seen through OpenWrt | Auto-detected |
 | `IP_IS_DUPLICATE` | Whether this IP was used before | false |
 | `RUSTDESK_PASSWORD` | RustDesk password (auto-generated) | Random |
 | `MAC_PASSWORD` | macOS user password (auto-generated) | Random |

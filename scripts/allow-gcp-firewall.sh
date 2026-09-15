@@ -19,7 +19,7 @@ if [ -z "$SESSION_IP" ] || [ -z "${GCP_SA_KEY:-}" ]; then
     exit 0
 fi
 
-echo -e "${CYAN}Allowing ${SESSION_IP} on proxy-pool-client${NC}"
+echo -e "${CYAN}Allowing ${SESSION_IP} on proxy-pool-client and proxy-pool-wg${NC}"
 
 KEYFILE="$(mktemp)"
 printf '%s' "$GCP_SA_KEY" > "$KEYFILE"
@@ -40,6 +40,19 @@ gcloud compute firewall-rules update proxy-pool-client \
     --project=angular-box-420305 \
     --source-ranges="${EXISTING},${NEW_RANGE}" \
     --quiet
+
+WG_EXISTING="$(gcloud compute firewall-rules describe proxy-pool-wg --project=angular-box-420305 --format='value(sourceRanges)' 2>/dev/null | tr ';' ',')"
+if [ -n "$WG_EXISTING" ]; then
+    case ",${WG_EXISTING}," in
+        *",${NEW_RANGE},"*) ;;
+        *)
+            gcloud compute firewall-rules update proxy-pool-wg \
+                --project=angular-box-420305 \
+                --source-ranges="${WG_EXISTING},${NEW_RANGE}" \
+                --quiet
+            ;;
+    esac
+fi
 
 echo -e "${GREEN}Firewall now includes ${NEW_RANGE}${NC}"
 exit 0

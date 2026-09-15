@@ -419,13 +419,82 @@ fi
 /etc/init.d/firewall reload
 REMOTE
 
-GCP_PROXY_HOST="${GCP_PROXY_HOST:-35.215.247.149}"
-GCP_PROXY_PORT="${GCP_PROXY_PORT:-443}"
-GCP_PROXY_USER="${GCP_PROXY_USER:-proxy_pool_01}"
-GCP_PROXY_PASS="${GCP_PROXY_PASS:-}"
+WG_ENDPOINT="${WG_ENDPOINT:-35.215.247.149}"
+WG_ENDPOINT_PORT="${WG_ENDPOINT_PORT:-51820}"
+WG_OPENWRT_PRIVATE_KEY="${WG_OPENWRT_PRIVATE_KEY:-}"
+WG_SERVER_PUBLIC_KEY="${WG_SERVER_PUBLIC_KEY:-}"
 
-if [ -n "$GCP_PROXY_HOST" ] && [ -n "$GCP_PROXY_PORT" ] && [ -n "$GCP_PROXY_USER" ] && [ -n "$GCP_PROXY_PASS" ]; then
-    echo -e "${BLUE}🔗 Chaining OpenWrt tinyproxy through GCP ${GCP_PROXY_HOST}:${GCP_PROXY_PORT}...${NC}"
+if [ -n "$WG_OPENWRT_PRIVATE_KEY" ] && [ -n "$WG_SERVER_PUBLIC_KEY" ]; then
+    echo -e "${BLUE}🛣  Making OpenWrt the router: WireGuard to GCP, SNAT only (no HTTP CONNECT)...${NC}"
+    ssh $SSH_OPTS root@127.0.0.1 "cat > /tmp/wg.env" <<WGENV
+WG_ENDPOINT=${WG_ENDPOINT}
+WG_ENDPOINT_PORT=${WG_ENDPOINT_PORT}
+WG_OPENWRT_PRIVATE_KEY=${WG_OPENWRT_PRIVATE_KEY}
+WG_SERVER_PUBLIC_KEY=${WG_SERVER_PUBLIC_KEY}
+WGENV
+    ssh $SSH_OPTS root@127.0.0.1 'ash -s' <<'REMOTE'
+set +e
+. /tmp/wg.env
+rm -f /tmp/wg.env
+opkg update
+opkg install wireguard-tools kmod-wireguard
+
+uci -q delete network.wg0
+uci set network.wg0=interface
+uci set network.wg0.proto='wireguard'
+uci set network.wg0.private_key="$WG_OPENWRT_PRIVATE_KEY"
+uci add_list network.wg0.addresses='10.66.0.2/24'
+uci set network.wg0.mtu='1280'
+
+while uci -q delete network.@wireguard_wg0[0]; do :; done
+uci add network wireguard_wg0
+uci set network.@wireguard_wg0[-1].public_key="$WG_SERVER_PUBLIC_KEY"
+uci set network.@wireguard_wg0[-1].endpoint_host="$WG_ENDPOINT"
+uci set network.@wireguard_wg0[-1].endpoint_port="$WG_ENDPOINT_PORT"
+uci set network.@wireguard_wg0[-1].persistent_keepalive='25'
+uci add_list network.@wireguard_wg0[-1].allowed_ips='0.0.0.0/0'
+uci set network.@wireguard_wg0[-1].route_allowed_ips='0'
+uci commit network
+ifup wg0
+sleep 3
+
+OLD_GW=$(ip route | awk '/default/ {print $3; exit}')
+ip route replace "${WG_ENDPOINT}/32" via "$OLD_GW"
+if ping -c 2 -W 3 10.66.0.1 >/dev/null 2>&1; then
+    ip route replace default via 10.66.0.1 dev wg0
+    iptables -t mangle -C OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null \
+      || iptables -t mangle -A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    echo WG_ROUTE_OK
+else
+    echo WG_PING_FAIL
+    exit 1
+fi
+
+cat > /etc/tinyproxy/tinyproxy.conf <<'CFG'
+Port 3128
+Listen 0.0.0.0
+Timeout 600
+LogLevel Info
+MaxClients 100
+Allow 0.0.0.0/0
+ConnectPort 443
+ConnectPort 80
+ConnectPort 8080
+ConnectPort 8443
+ConnectPort 5222
+ConnectPort 5228
+ConnectPort 853
+CFG
+killall tinyproxy 2>/dev/null
+tinyproxy -c /etc/tinyproxy/tinyproxy.conf
+REMOTE
+    if [ $? -eq 0 ]; then
+        echo "OPENWRT_UPSTREAM=wireguard-router" >> "${GITHUB_ENV:-/dev/null}"
+    else
+        echo -e "${YELLOW}WireGuard did not come up — OpenWrt stays on Azure${NC}"
+    fi
+elif [ -n "${GCP_PROXY_PASS:-}" ]; then
+    echo -e "${YELLOW}ℹ️  WireGuard keys missing — falling back to HTTP CONNECT through GCP${NC}"
     ssh $SSH_OPTS root@127.0.0.1 "cat > /etc/tinyproxy/tinyproxy.conf" <<CFG
 Port 3128
 Listen 0.0.0.0
@@ -440,19 +509,12 @@ ConnectPort 8443
 ConnectPort 5222
 ConnectPort 5228
 ConnectPort 853
-Upstream http ${GCP_PROXY_USER}:${GCP_PROXY_PASS}@${GCP_PROXY_HOST}:${GCP_PROXY_PORT}
+Upstream http ${GCP_PROXY_USER:-proxy_pool_01}:${GCP_PROXY_PASS}@${GCP_PROXY_HOST:-35.215.247.149}:${GCP_PROXY_PORT:-443}
 CFG
-    ssh $SSH_OPTS root@127.0.0.1 'ash -s' <<'REMOTE'
-set +e
-if [ -x /etc/init.d/tinyproxy ]; then
-    /etc/init.d/tinyproxy restart
-fi
-killall tinyproxy 2>/dev/null
-tinyproxy -c /etc/tinyproxy/tinyproxy.conf
-REMOTE
-    echo "OPENWRT_UPSTREAM=gcp" >> "${GITHUB_ENV:-/dev/null}"
+    ssh $SSH_OPTS root@127.0.0.1 'killall tinyproxy 2>/dev/null; tinyproxy -c /etc/tinyproxy/tinyproxy.conf'
+    echo "OPENWRT_UPSTREAM=gcp-connect" >> "${GITHUB_ENV:-/dev/null}"
 else
-    echo -e "${YELLOW}ℹ️  No GCP_PROXY_* secrets — OpenWrt will egress on the Azure IP${NC}"
+    echo -e "${YELLOW}ℹ️  No WireGuard keys and no GCP password — OpenWrt egresses on Azure${NC}"
 fi
 
 echo -e "${BLUE}🧪 Testing localhost -> OpenWrt HTTP proxy...${NC}"

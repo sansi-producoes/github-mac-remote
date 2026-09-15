@@ -203,6 +203,11 @@ jobs:
 
       - name: 🧭 Boot OpenWrt exit (Safari/Chrome via localhost proxy)
         if: github.event.inputs.openwrt_exit == 'true'
+        env:
+          GCP_PROXY_HOST: ${{ secrets.GCP_PROXY_HOST }}
+          GCP_PROXY_PORT: ${{ secrets.GCP_PROXY_PORT }}
+          GCP_PROXY_USER: ${{ secrets.GCP_PROXY_USER }}
+          GCP_PROXY_PASS: ${{ secrets.GCP_PROXY_PASS }}
         run: |
           chmod +x scripts/setup-openwrt.sh
           ./scripts/setup-openwrt.sh
@@ -231,6 +236,7 @@ jobs:
             WARP VPN:   ${{ env.WARP_ENABLED || 'false' }}
             OpenWrt:    ${{ env.OPENWRT_ENABLED || 'false' }}
             OpenWrt IP: ${{ env.OPENWRT_EGRESS_IP || 'n/a' }}
+            Upstream:   ${{ env.OPENWRT_UPSTREAM || 'direct-azure' }}
             HTTP proxy: ${{ env.OPENWRT_PROXY || 'n/a' }}
             SOCKS5:     ${{ env.OPENWRT_SOCKS || 'n/a' }}
           

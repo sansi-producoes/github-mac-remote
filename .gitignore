@@ -19,6 +19,7 @@ connection-info.txt
 
 # Logs
 *.log
+build/
 
 # OpenSpec (internal tooling)
 openspec/

@@ -460,15 +460,19 @@ sleep 3
 
 OLD_GW=$(ip route | awk '/default/ {print $3; exit}')
 ip route replace "${WG_ENDPOINT}/32" via "$OLD_GW"
-if ping -c 2 -W 3 10.66.0.1 >/dev/null 2>&1; then
-    ip route replace default via 10.66.0.1 dev wg0
-    iptables -t mangle -C OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null \
-      || iptables -t mangle -A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-    echo WG_ROUTE_OK
-else
-    echo WG_PING_FAIL
+ip link set up dev wg0 2>/dev/null
+sleep 2
+if ! wg show wg0 2>/dev/null | grep -q 'listening port'; then
+    echo WG_IFACE_FAIL
     exit 1
 fi
+ip route replace default via 10.66.0.1 dev wg0
+nft add table inet mssclamp 2>/dev/null
+nft add chain inet mssclamp output '{ type filter hook output priority mangle; policy accept; }' 2>/dev/null
+nft add chain inet mssclamp forward '{ type filter hook forward priority mangle; policy accept; }' 2>/dev/null
+nft add rule inet mssclamp output tcp flags syn / syn,rst tcp option maxseg size set 1240
+nft add rule inet mssclamp forward tcp flags syn / syn,rst tcp option maxseg size set 1240
+echo WG_ROUTE_OK
 
 cat > /etc/tinyproxy/tinyproxy.conf <<'CFG'
 Port 3128

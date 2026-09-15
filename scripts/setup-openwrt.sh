@@ -419,6 +419,37 @@ fi
 /etc/init.d/firewall reload
 REMOTE
 
+if [ -n "${GCP_PROXY_HOST:-}" ] && [ -n "${GCP_PROXY_PORT:-}" ] && [ -n "${GCP_PROXY_USER:-}" ] && [ -n "${GCP_PROXY_PASS:-}" ]; then
+    echo -e "${BLUE}🔗 Chaining OpenWrt tinyproxy through GCP ${GCP_PROXY_HOST}:${GCP_PROXY_PORT}...${NC}"
+    ssh $SSH_OPTS root@127.0.0.1 "cat > /etc/tinyproxy/tinyproxy.conf" <<CFG
+Port 3128
+Listen 0.0.0.0
+Timeout 600
+LogLevel Info
+MaxClients 100
+Allow 0.0.0.0/0
+ConnectPort 443
+ConnectPort 80
+ConnectPort 8080
+ConnectPort 8443
+ConnectPort 5222
+ConnectPort 5228
+ConnectPort 853
+Upstream http ${GCP_PROXY_USER}:${GCP_PROXY_PASS}@${GCP_PROXY_HOST}:${GCP_PROXY_PORT}
+CFG
+    ssh $SSH_OPTS root@127.0.0.1 'ash -s' <<'REMOTE'
+set +e
+if [ -x /etc/init.d/tinyproxy ]; then
+    /etc/init.d/tinyproxy restart
+fi
+killall tinyproxy 2>/dev/null
+tinyproxy -c /etc/tinyproxy/tinyproxy.conf
+REMOTE
+    echo "OPENWRT_UPSTREAM=gcp" >> "${GITHUB_ENV:-/dev/null}"
+else
+    echo -e "${YELLOW}ℹ️  No GCP_PROXY_* secrets — OpenWrt will egress on the Azure IP${NC}"
+fi
+
 echo -e "${BLUE}🧪 Testing localhost -> OpenWrt HTTP proxy...${NC}"
 PROXY_IP="$(curl -s --max-time 25 --proxy "http://127.0.0.1:${HTTP_HOSTPORT}" https://api.ipify.org)"
 if [ -z "$PROXY_IP" ]; then

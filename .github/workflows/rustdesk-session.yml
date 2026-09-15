@@ -216,6 +216,8 @@ jobs:
           GCP_PROXY_PORT: ${{ secrets.GCP_PROXY_PORT }}
           GCP_PROXY_USER: ${{ secrets.GCP_PROXY_USER }}
           GCP_PROXY_PASS: ${{ secrets.GCP_PROXY_PASS }}
+          WG_OPENWRT_PRIVATE_KEY: ${{ secrets.WG_OPENWRT_PRIVATE_KEY }}
+          WG_SERVER_PUBLIC_KEY: ${{ secrets.WG_SERVER_PUBLIC_KEY }}
         run: |
           chmod +x scripts/setup-openwrt.sh
           ./scripts/setup-openwrt.sh

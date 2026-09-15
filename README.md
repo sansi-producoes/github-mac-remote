@@ -178,6 +178,15 @@ When **OpenWrt exit** is `true` (the default), the job boots an OpenWrt VM with 
 
 The first boot can take a few minutes (Homebrew QEMU + OpenWrt). If the VM fails, the script logs a warning and the RustDesk session still starts.
 
+To send Safari/Chrome out through the GCP Brazil proxy instead of the raw Azure IP, set these repository secrets:
+
+- `GCP_PROXY_HOST`
+- `GCP_PROXY_PORT`
+- `GCP_PROXY_USER`
+- `GCP_PROXY_PASS`
+
+The workflow injects them into OpenWrt tinyproxy as an upstream. They never appear in logs or in the repo. The GCP firewall must allow that session's Azure public IP.
+
 Manual SOCKS5 for a specific app: `127.0.0.1:11080`.
 
 ---

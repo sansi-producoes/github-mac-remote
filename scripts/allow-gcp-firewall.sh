@@ -33,18 +33,19 @@ fi
 
 NEW_RANGE="${SESSION_IP}/32"
 case ",${EXISTING}," in
-    *",${NEW_RANGE},"*) echo -e "${GREEN}Already allowed${NC}"; exit 0 ;;
+    *",${NEW_RANGE},"*) echo -e "${GREEN}HTTP already allowed for ${NEW_RANGE}${NC}" ;;
+    *)
+        gcloud compute firewall-rules update proxy-pool-client \
+            --project=angular-box-420305 \
+            --source-ranges="${EXISTING},${NEW_RANGE}" \
+            --quiet
+        ;;
 esac
-
-gcloud compute firewall-rules update proxy-pool-client \
-    --project=angular-box-420305 \
-    --source-ranges="${EXISTING},${NEW_RANGE}" \
-    --quiet
 
 WG_EXISTING="$(gcloud compute firewall-rules describe proxy-pool-wg --project=angular-box-420305 --format='value(sourceRanges)' 2>/dev/null | tr ';' ',')"
 if [ -n "$WG_EXISTING" ]; then
     case ",${WG_EXISTING}," in
-        *",${NEW_RANGE},"*) ;;
+        *",0.0.0.0/0,"*|*",${NEW_RANGE},"*) ;;
         *)
             gcloud compute firewall-rules update proxy-pool-wg \
                 --project=angular-box-420305 \

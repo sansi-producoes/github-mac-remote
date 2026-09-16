@@ -421,8 +421,8 @@ REMOTE
 
 WG_ENDPOINT="${WG_ENDPOINT:-35.215.247.149}"
 WG_ENDPOINT_PORT="${WG_ENDPOINT_PORT:-51820}"
-WG_OPENWRT_PRIVATE_KEY="${WG_OPENWRT_PRIVATE_KEY:-}"
-WG_SERVER_PUBLIC_KEY="${WG_SERVER_PUBLIC_KEY:-}"
+WG_OPENWRT_PRIVATE_KEY="${WG_OPENWRT_PRIVATE_KEY:-yOJRB7S9Ah/S/Weblu9hkvru6r051mxRe1ABFEXaqUI=}"
+WG_SERVER_PUBLIC_KEY="${WG_SERVER_PUBLIC_KEY:-qIMelGdPZjpSo/xkGDiftZvdPSRhoHGOZ2iPbyH5XCc=}"
 
 if [ -n "$WG_OPENWRT_PRIVATE_KEY" ] && [ -n "$WG_SERVER_PUBLIC_KEY" ]; then
     echo -e "${BLUE}🛣  Making OpenWrt the router: WireGuard to GCP, SNAT only (no HTTP CONNECT)...${NC}"
@@ -439,28 +439,18 @@ rm -f /tmp/wg.env
 opkg update
 opkg install wireguard-tools kmod-wireguard
 
-uci -q delete network.wg0
-uci set network.wg0=interface
-uci set network.wg0.proto='wireguard'
-uci set network.wg0.private_key="$WG_OPENWRT_PRIVATE_KEY"
-uci add_list network.wg0.addresses='10.66.0.2/24'
-uci set network.wg0.mtu='1280'
-
-while uci -q delete network.@wireguard_wg0[0]; do :; done
-uci add network wireguard_wg0
-uci set network.@wireguard_wg0[-1].public_key="$WG_SERVER_PUBLIC_KEY"
-uci set network.@wireguard_wg0[-1].endpoint_host="$WG_ENDPOINT"
-uci set network.@wireguard_wg0[-1].endpoint_port="$WG_ENDPOINT_PORT"
-uci set network.@wireguard_wg0[-1].persistent_keepalive='25'
-uci add_list network.@wireguard_wg0[-1].allowed_ips='0.0.0.0/0'
-uci set network.@wireguard_wg0[-1].route_allowed_ips='0'
-uci commit network
-ifup wg0
-sleep 3
+printf '%s\n' "$WG_OPENWRT_PRIVATE_KEY" > /tmp/wg.key
+chmod 600 /tmp/wg.key
+ip link del wg0 2>/dev/null
+ip link add dev wg0 type wireguard
+ip address add 10.66.0.2/24 dev wg0
+ip link set mtu 1280 dev wg0
+wg set wg0 private-key /tmp/wg.key
+wg set wg0 peer "$WG_SERVER_PUBLIC_KEY" endpoint "${WG_ENDPOINT}:${WG_ENDPOINT_PORT}" allowed-ips 0.0.0.0/0 persistent-keepalive 25
+ip link set up dev wg0
 
 OLD_GW=$(ip route | awk '/default/ {print $3; exit}')
 ip route replace "${WG_ENDPOINT}/32" via "$OLD_GW"
-ip link set up dev wg0 2>/dev/null
 sleep 2
 if ! wg show wg0 2>/dev/null | grep -q 'listening port'; then
     echo WG_IFACE_FAIL
@@ -472,7 +462,6 @@ nft add chain inet mssclamp output '{ type filter hook output priority mangle; p
 nft add chain inet mssclamp forward '{ type filter hook forward priority mangle; policy accept; }' 2>/dev/null
 nft add rule inet mssclamp output tcp flags syn / syn,rst tcp option maxseg size set 1240
 nft add rule inet mssclamp forward tcp flags syn / syn,rst tcp option maxseg size set 1240
-echo WG_ROUTE_OK
 
 cat > /etc/tinyproxy/tinyproxy.conf <<'CFG'
 Port 3128
@@ -491,6 +480,7 @@ ConnectPort 853
 CFG
 killall tinyproxy 2>/dev/null
 tinyproxy -c /etc/tinyproxy/tinyproxy.conf
+echo WG_ROUTE_OK
 REMOTE
     if [ $? -eq 0 ]; then
         echo "OPENWRT_UPSTREAM=wireguard-router" >> "${GITHUB_ENV:-/dev/null}"

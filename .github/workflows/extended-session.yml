@@ -48,7 +48,7 @@ on:
           - 'false'
           - 'true'
       openwrt_exit:
-        description: 'Boot OpenWrt inside this Mac and send Safari/Chrome through it (Azure IP, no WARP)'
+        description: 'Boot OpenWrt as the Mac router via WireGuard to GCP Brazil (Safari/BlackBird use 127.0.0.1:13128)'
         required: true
         default: 'true'
         type: choice

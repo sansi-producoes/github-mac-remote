@@ -48,13 +48,21 @@ on:
           - 'false'
           - 'true'
       openwrt_exit:
-        description: 'Boot OpenWrt as the Mac router via WireGuard to GCP Brazil (Safari/BlackBird use 127.0.0.1:13128)'
+        description: 'Boot OpenWrt as the Mac router (Safari/BlackBird use 127.0.0.1:13128; egress = native Azure IP)'
         required: true
         default: 'true'
         type: choice
         options:
           - 'true'
           - 'false'
+      gcp_egress:
+        description: 'Route OpenWrt through WireGuard to GCP Brazil instead of the native Azure IP'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
       current_chain:
         description: 'Current chain number (internal use)'
         required: false
@@ -216,7 +224,7 @@ jobs:
           fi
 
       - name: 🔓 Allow this session IP on the GCP proxy
-        if: github.event.inputs.openwrt_exit == 'true'
+        if: github.event.inputs.openwrt_exit == 'true' && github.event.inputs.gcp_egress == 'true'
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
@@ -226,12 +234,12 @@ jobs:
       - name: 🧭 Boot OpenWrt exit (Safari/Chrome via localhost proxy)
         if: github.event.inputs.openwrt_exit == 'true'
         env:
-          GCP_PROXY_HOST: ${{ secrets.GCP_PROXY_HOST }}
-          GCP_PROXY_PORT: ${{ secrets.GCP_PROXY_PORT }}
-          GCP_PROXY_USER: ${{ secrets.GCP_PROXY_USER }}
-          GCP_PROXY_PASS: ${{ secrets.GCP_PROXY_PASS }}
-          WG_OPENWRT_PRIVATE_KEY: ${{ secrets.WG_OPENWRT_PRIVATE_KEY }}
-          WG_SERVER_PUBLIC_KEY: ${{ secrets.WG_SERVER_PUBLIC_KEY }}
+          GCP_PROXY_HOST: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_HOST || '' }}
+          GCP_PROXY_PORT: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_PORT || '' }}
+          GCP_PROXY_USER: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_USER || '' }}
+          GCP_PROXY_PASS: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_PASS || '' }}
+          WG_OPENWRT_PRIVATE_KEY: ${{ github.event.inputs.gcp_egress == 'true' && secrets.WG_OPENWRT_PRIVATE_KEY || '' }}
+          WG_SERVER_PUBLIC_KEY: ${{ github.event.inputs.gcp_egress == 'true' && secrets.WG_SERVER_PUBLIC_KEY || '' }}
         run: |
           chmod +x scripts/setup-openwrt.sh
           ./scripts/setup-openwrt.sh
@@ -416,6 +424,7 @@ jobs:
                   -f runner_size=${{ github.event.inputs.runner_size }} \
                   -f unique_ip=${{ github.event.inputs.unique_ip }} \
                   -f openwrt_exit=${{ github.event.inputs.openwrt_exit }} \
+                  -f gcp_egress=${{ github.event.inputs.gcp_egress }} \
                   -f current_chain=${NEXT_CHAIN}
                 
                 triggered_chain=true

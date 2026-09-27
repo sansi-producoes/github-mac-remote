@@ -419,10 +419,12 @@ fi
 /etc/init.d/firewall reload
 REMOTE
 
+# WG/GCP is OPT-IN: no baked-in keys. Empty env -> OpenWrt NATs out through
+# the Mac's native Azure path (see the else branch at the bottom).
 WG_ENDPOINT="${WG_ENDPOINT:-35.215.247.149}"
 WG_ENDPOINT_PORT="${WG_ENDPOINT_PORT:-51820}"
-WG_OPENWRT_PRIVATE_KEY="${WG_OPENWRT_PRIVATE_KEY:-yOJRB7S9Ah/S/Weblu9hkvru6r051mxRe1ABFEXaqUI=}"
-WG_SERVER_PUBLIC_KEY="${WG_SERVER_PUBLIC_KEY:-qIMelGdPZjpSo/xkGDiftZvdPSRhoHGOZ2iPbyH5XCc=}"
+WG_OPENWRT_PRIVATE_KEY="${WG_OPENWRT_PRIVATE_KEY:-}"
+WG_SERVER_PUBLIC_KEY="${WG_SERVER_PUBLIC_KEY:-}"
 
 if [ -n "$WG_OPENWRT_PRIVATE_KEY" ] && [ -n "$WG_SERVER_PUBLIC_KEY" ]; then
     echo -e "${BLUE}🛣  Making OpenWrt the router: WireGuard to GCP, SNAT only (no HTTP CONNECT)...${NC}"

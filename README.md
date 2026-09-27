@@ -58,6 +58,7 @@ Download from: **https://rustdesk.com/download**
    - **Runner size**: Mac size (see table below)
    - **Unique IP**: Enable to guarantee a fresh IP via Cloudflare WARP VPN
    - **OpenWrt exit**: default **on** — boots OpenWrt inside the Mac and sends Safari/Chrome through it. WARP is skipped in this mode.
+   - **GCP egress**: default **off** — leave it off to egress through the runner's **native Azure IP**; set `true` to tunnel OpenWrt through WireGuard to the GCP Brazil proxy instead.
 4. Click **"Run workflow"**
 
 ### Step 4: Connect
@@ -178,14 +179,12 @@ When **OpenWrt exit** is `true` (the default), the job boots an OpenWrt VM with 
 
 The first boot can take a few minutes (Homebrew QEMU + OpenWrt). If the VM fails, the script logs a warning and the RustDesk session still starts.
 
-To send Safari/Chrome out through the GCP Brazil proxy instead of the raw Azure IP, set these repository secrets:
+To send Safari/Chrome out through the GCP Brazil proxy instead of the raw Azure IP, start the workflow with **GCP egress** = `true` and set these repository secrets:
 
-- `GCP_PROXY_HOST`
-- `GCP_PROXY_PORT`
-- `GCP_PROXY_USER`
-- `GCP_PROXY_PASS`
+- `WG_OPENWRT_PRIVATE_KEY` + `WG_SERVER_PUBLIC_KEY` — preferred: OpenWrt becomes a full WireGuard router to the GCP gateway
+- `GCP_PROXY_HOST`, `GCP_PROXY_PORT`, `GCP_PROXY_USER`, `GCP_PROXY_PASS` — fallback: tinyproxy chains through the GCP Squid proxy
 
-The workflow injects them into OpenWrt tinyproxy as an upstream. They never appear in logs or in the repo. The GCP firewall must allow that session's Azure public IP.
+The workflow injects them into OpenWrt only when **GCP egress** is `true`. They never appear in logs or in the repo. The GCP firewall must allow that session's Azure public IP.
 
 Manual SOCKS5 for a specific app: `127.0.0.1:11080`.
 

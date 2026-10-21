@@ -459,11 +459,29 @@ if ! wg show wg0 2>/dev/null | grep -q 'listening port'; then
     exit 1
 fi
 ip route replace default via 10.66.0.1 dev wg0
+
+# MSS clamp to fit the WireGuard tunnel (MTU 1280). Trade-off, documented:
+# p0f reads MSS=1240 from SYN options and maps it to a tunnel/VPN profile.
+# Fine to keep today because path-MTU is mandatory on this transport; the
+# region tell is weaker than the L7 story on top of it.
 nft add table inet mssclamp 2>/dev/null
 nft add chain inet mssclamp output '{ type filter hook output priority mangle; policy accept; }' 2>/dev/null
 nft add chain inet mssclamp forward '{ type filter hook forward priority mangle; policy accept; }' 2>/dev/null
 nft add rule inet mssclamp output tcp flags syn / syn,rst tcp option maxseg size set 1240
 nft add rule inet mssclamp forward tcp flags syn / syn,rst tcp option maxseg size set 1240
+
+# Coherent DNS: with the default route pinned to wg0, the exit is GCP
+# (Brazil), so dnsmasq must NOT keep forwarding to the runner's DHCP
+# resolver (Azure, US) - that resolver region would mismatch the exit IP.
+# Resolve through the tunnel via Google anycast (8.8.8.8/8.8.4.4): Google
+# terminates resolver egress in the POP nearest the querying client,
+# which lands in Brazil, matching the exit IP's region.
+uci set dhcp.@dnsmasq[0].noresolv='1'
+uci -q delete dhcp.@dnsmasq[0].server
+uci add_list dhcp.@dnsmasq[0].server='8.8.8.8'
+uci add_list dhcp.@dnsmasq[0].server='8.8.4.4'
+uci commit dhcp
+/etc/init.d/dnsmasq restart
 
 cat > /etc/tinyproxy/tinyproxy.conf <<'CFG'
 Port 3128

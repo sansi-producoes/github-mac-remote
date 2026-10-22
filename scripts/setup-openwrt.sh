@@ -423,16 +423,16 @@ REMOTE
 # the Mac's native Azure path (see the else branch at the bottom).
 WG_ENDPOINT="${WG_ENDPOINT:-35.215.247.149}"
 WG_ENDPOINT_PORT="${WG_ENDPOINT_PORT:-51820}"
-WG_OPENWRT_PRIVATE_KEY="${WG_OPENWRT_PRIVATE_KEY:-}"
+WG_CLIENT_SLOTS_B64="${WG_CLIENT_SLOTS_B64:-}"
 WG_SERVER_PUBLIC_KEY="${WG_SERVER_PUBLIC_KEY:-}"
 
-if [ -n "$WG_OPENWRT_PRIVATE_KEY" ] && [ -n "$WG_SERVER_PUBLIC_KEY" ]; then
-    echo -e "${BLUE}🛣  Making OpenWrt the router: WireGuard to GCP, SNAT only (no HTTP CONNECT)...${NC}"
+if [ -n "$WG_CLIENT_SLOTS_B64" ] && [ -n "$WG_SERVER_PUBLIC_KEY" ]; then
+    echo -e "${BLUE}🛣  Making OpenWrt the router: WireGuard to GCP, peer-pool slots...${NC}"
     ssh $SSH_OPTS root@127.0.0.1 "cat > /tmp/wg.env" <<WGENV
 WG_ENDPOINT=${WG_ENDPOINT}
 WG_ENDPOINT_PORT=${WG_ENDPOINT_PORT}
-WG_OPENWRT_PRIVATE_KEY=${WG_OPENWRT_PRIVATE_KEY}
 WG_SERVER_PUBLIC_KEY=${WG_SERVER_PUBLIC_KEY}
+WG_CLIENT_SLOTS_B64=${WG_CLIENT_SLOTS_B64}
 WGENV
     ssh $SSH_OPTS root@127.0.0.1 'ash -s' <<'REMOTE'
 set +e
@@ -441,15 +441,46 @@ rm -f /tmp/wg.env
 opkg update
 opkg install wireguard-tools kmod-wireguard
 
-printf '%s\n' "$WG_OPENWRT_PRIVATE_KEY" > /tmp/wg.key
-chmod 600 /tmp/wg.key
+WG_CLIENT_SLOTS=$(printf '%s' "$WG_CLIENT_SLOTS_B64" | base64 -d)
+SLOTS_N=$(printf '%s\n' "$WG_CLIENT_SLOTS" | grep -c .)
+if [ -z "$WG_CLIENT_SLOTS" ] || [ "$SLOTS_N" -lt 1 ]; then
+    echo NO_SLOTS
+    exit 1
+fi
+
 ip link del wg0 2>/dev/null
 ip link add dev wg0 type wireguard
-ip address add 10.66.0.2/24 dev wg0
 ip link set mtu 1280 dev wg0
-wg set wg0 private-key /tmp/wg.key
 wg set wg0 peer "$WG_SERVER_PUBLIC_KEY" endpoint "${WG_ENDPOINT}:${WG_ENDPOINT_PORT}" allowed-ips 0.0.0.0/0 persistent-keepalive 25
-ip link set up dev wg0
+
+# Pick a random start so concurrent sessions rarely contend for the same
+# slot; a real collision falls through to the next slot anyway.
+START=$(( ($(date +%s) % SLOTS_N) + 1 ))
+GOT=0
+i=0
+while [ $i -lt $SLOTS_N ]; do
+    K=$(( ((START + i - 1) % SLOTS_N) + 1 ))
+    PR=$(printf '%s\n' "$WG_CLIENT_SLOTS" | sed -n "${K}p")
+    [ -n "$PR" ] || { i=$((i+1)); continue; }
+    printf '%s\n' "$PR" > /tmp/wg.key
+    chmod 600 /tmp/wg.key
+    wg set wg0 private-key /tmp/wg.key
+    ip address add "10.66.0.$((K + 1))/24" dev wg0 2>/dev/null
+    ip link set up dev wg0
+    sleep 3
+    HS=$(wg show wg0 latest-handshakes | awk '{print $2}')
+    if [ -n "$HS" ] && [ "$HS" -gt 0 ]; then
+        GOT=$K
+        break
+    fi
+    ip address del "10.66.0.$((K + 1))/24" dev wg0 2>/dev/null
+    i=$((i+1))
+done
+if [ "$GOT" -eq 0 ]; then
+    echo ALL_SLOTS_BUSY
+    exit 1
+fi
+echo "WG_SLOT=$GOT"
 
 OLD_GW=$(ip route | awk '/default/ {print $3; exit}')
 ip route replace "${WG_ENDPOINT}/32" via "$OLD_GW"

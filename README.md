@@ -181,7 +181,7 @@ The first boot can take a few minutes (Homebrew QEMU + OpenWrt). If the VM fails
 
 To send Safari/Chrome out through the GCP Brazil proxy instead of the raw Azure IP, start the workflow with **GCP egress** = `true` and set these repository secrets:
 
-- `WG_OPENWRT_PRIVATE_KEY` + `WG_SERVER_PUBLIC_KEY` — preferred: OpenWrt becomes a full WireGuard router to the GCP gateway
+- `WG_CLIENT_SLOTS_B64` + `WG_SERVER_PUBLIC_KEY` — preferred: OpenWrt becomes a full WireGuard router to the GCP gateway (peer pool; each session claims a free slot)
 - `GCP_PROXY_HOST`, `GCP_PROXY_PORT`, `GCP_PROXY_USER`, `GCP_PROXY_PASS` — fallback: tinyproxy chains through the GCP Squid proxy
 
 The workflow injects them into OpenWrt only when **GCP egress** is `true`. They never appear in logs or in the repo. The GCP firewall must allow that session's Azure public IP.

@@ -238,7 +238,7 @@ jobs:
           GCP_PROXY_PORT: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_PORT || '' }}
           GCP_PROXY_USER: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_USER || '' }}
           GCP_PROXY_PASS: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_PASS || '' }}
-          WG_OPENWRT_PRIVATE_KEY: ${{ github.event.inputs.gcp_egress == 'true' && secrets.WG_OPENWRT_PRIVATE_KEY || '' }}
+          WG_CLIENT_SLOTS_B64: ${{ github.event.inputs.gcp_egress == 'true' && secrets.WG_CLIENT_SLOTS_B64 || '' }}
           WG_SERVER_PUBLIC_KEY: ${{ github.event.inputs.gcp_egress == 'true' && secrets.WG_SERVER_PUBLIC_KEY || '' }}
         run: |
           chmod +x scripts/setup-openwrt.sh

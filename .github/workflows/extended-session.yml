@@ -240,9 +240,19 @@ jobs:
           GCP_PROXY_PASS: ${{ github.event.inputs.gcp_egress == 'true' && secrets.GCP_PROXY_PASS || '' }}
           WG_CLIENT_SLOTS_B64: ${{ github.event.inputs.gcp_egress == 'true' && secrets.WG_CLIENT_SLOTS_B64 || '' }}
           WG_SERVER_PUBLIC_KEY: ${{ github.event.inputs.gcp_egress == 'true' && secrets.WG_SERVER_PUBLIC_KEY || '' }}
+          SOCKS5_HOST: ${{ secrets.SOCKS5_HOST || '' }}
+          SOCKS5_PORT: ${{ secrets.SOCKS5_PORT || '' }}
+          SOCKS5_USER: ${{ secrets.SOCKS5_USER || '' }}
+          SOCKS5_PASS: ${{ secrets.SOCKS5_PASS || '' }}
         run: |
           chmod +x scripts/setup-openwrt.sh
           ./scripts/setup-openwrt.sh
+
+      - name: 🛡️ Audit Stealth & Anti-Fingerprint (Trinity L4 + WunderDNS)
+        if: github.event.inputs.openwrt_exit == 'true'
+        run: |
+          chmod +x scripts/verify-stealth.sh
+          ./scripts/verify-stealth.sh
 
       - name: 💾 Save Credentials (Private File)
         run: |
@@ -458,6 +468,14 @@ jobs:
           echo "👋 Chain ${{ env.CURRENT_CHAIN }} ended."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧹 Cleanup GCP Firewall Rule
+        if: always() && github.event.inputs.openwrt_exit == 'true' && github.event.inputs.gcp_egress == 'true'
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          chmod +x scripts/cleanup-gcp-firewall.sh
+          ./scripts/cleanup-gcp-firewall.sh
 
       - name: 💾 Save IP History Cache
         if: always()

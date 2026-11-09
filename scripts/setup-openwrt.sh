@@ -800,11 +800,17 @@ nft add rule inet mssclamp forward oifname "wg0" ip ttl set 65
 nft add rule inet mssclamp output tcp flags syn / syn,rst tcp option maxseg size set 1360
 nft add rule inet mssclamp forward tcp flags syn / syn,rst tcp option maxseg size set 1360
 
-# Start WunderDNS Hunter + Local TCP-DNS Bridge
+# Start WunderDNS Hunter ONLY when chaining through an upstream SOCKS5 proxy.
+# In pure Cloud WireGuard mode, direct dnsmasq -> 8.8.8.8/8.8.4.4 over wg0 hits the
+# exact same regional Google POP without RFC1918 probe timeouts or TCP-DNS overhead.
 killall python3 2>/dev/null || true
-SOCKS5_HOST="$SOCKS5_HOST" SOCKS5_PORT="$SOCKS5_PORT" SOCKS5_USER="$SOCKS5_USER" SOCKS5_PASS="$SOCKS5_PASS" \
-    nohup /usr/bin/wunderdns.py >/var/log/wunderdns.log 2>&1 &
-sleep 3
+if [ -n "$SOCKS5_HOST" ]; then
+    SOCKS5_HOST="$SOCKS5_HOST" SOCKS5_PORT="$SOCKS5_PORT" SOCKS5_USER="$SOCKS5_USER" SOCKS5_PASS="$SOCKS5_PASS" \
+        nohup /usr/bin/wunderdns.py >/var/log/wunderdns.log 2>&1 &
+    sleep 3
+else
+    echo "direct-wg-dns:8.8.8.8" > /tmp/wunderdns.state
+fi
 
 # Configure dnsmasq with 10,000-entry RAM cache, filter-aaaa=1 (no IPv6 leak),
 # and WunderDNS local bridge (127.0.0.1#5353) + Google POP fallback.
@@ -813,7 +819,7 @@ uci set dhcp.@dnsmasq[0].cachesize='10000'
 uci set dhcp.@dnsmasq[0].min_cache_ttl='300'
 uci set dhcp.@dnsmasq[0].filter_aaaa='1'
 uci -q delete dhcp.@dnsmasq[0].server
-if pgrep -f wunderdns.py >/dev/null 2>&1; then
+if [ -n "$SOCKS5_HOST" ] && pgrep -f wunderdns.py >/dev/null 2>&1; then
     uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 else
     uci add_list dhcp.@dnsmasq[0].server='8.8.8.8'
@@ -821,6 +827,12 @@ else
 fi
 uci commit dhcp
 /etc/init.d/dnsmasq restart
+sleep 1
+if ! pgrep dnsmasq >/dev/null 2>&1 || ! nslookup www.apple.com 127.0.0.1 >/dev/null 2>&1; then
+    uci -q delete dhcp.@dnsmasq[0].min_cache_ttl
+    uci commit dhcp
+    /etc/init.d/dnsmasq restart
+fi
 
 cat > /etc/tinyproxy/tinyproxy.conf <<'CFG'
 Port 3128

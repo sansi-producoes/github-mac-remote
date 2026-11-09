@@ -1,0 +1,69 @@
+name: RustDesk Ticket Patrol
+
+# On demand: patrols the macOS 26 ticket pool for up to 55 minutes on a cheap
+# ubuntu runner, re-dispatching dead tickets every 5 minutes. If a ticket gets
+# picked up by a hosted macOS runner, it cancels the queued siblings and exits
+# early (stops the meter). Use it when you want a session within the next hour.
+#
+# Meters: ubuntu hosted = $0.008/min -> a full 55-min patrol costs ~$0.44.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  patrol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - name: Patrol the macOS 26 ticket pool
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          REPO="$GITHUB_REPOSITORY"
+          WANT=5
+          END=$(( $(date +%s) + 55*60 ))
+          CYCLE=0
+          while [ "$(date +%s)" -lt "$END" ]; do
+            CYCLE=$((CYCLE+1))
+            QUEUED_IDS=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 15 \
+              --json status,databaseId \
+              --jq '[.[] | select(.status == "queued") | .databaseId]')
+            LIVE=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 15 \
+              --json status \
+              --jq '[.[] | select(.status == "in_progress")] | length')
+
+            if [ "$LIVE" -gt 0 ]; then
+              echo "CAPTURED! Session is live - cancelling queued siblings."
+              echo "$QUEUED_IDS" | jq -r '.[]' | while read -r id; do
+                gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
+                echo "CANCELLED $id"
+              done
+              echo "PATROL_CAPTURED cycle=$CYCLE"
+              exit 0
+            fi
+
+            ACTIVE=$(echo "$QUEUED_IDS" | jq 'length')
+            echo "cycle=$CYCLE queued=$ACTIVE want=$WANT"
+            if [ "$ACTIVE" -lt "$WANT" ]; then
+              NEEDED=$((WANT - ACTIVE))
+              echo "Re-dispatching $NEEDED ticket(s)."
+              i=0
+              while [ "$i" -lt "$NEEDED" ]; do
+                gh workflow run rustdesk-session.yml --repo "$REPO" \
+                  -f duration=6 \
+                  -f macos_version=26 \
+                  -f runner_size=standard \
+                  -f unique_ip=false \
+                  -f openwrt_exit=true \
+                  -f gcp_egress=true
+                i=$((i+1))
+                sleep 4
+              done
+            fi
+            sleep 300
+          done
+          echo "PATROL_DONE_NO_CATCH"

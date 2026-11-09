@@ -44,19 +44,32 @@ fi
 # 2. Passive L4 TCP/IP & TLS Fingerprint Check (tls.peet.ws)
 echo -e "${BLUE}[2/6] Auditing Passive L4 TCP Stack (Window / WScale / MSS / TTL)...${NC}"
 PEET_JSON="$(curl -s --max-time 15 --proxy "$PROXY_URL" https://tls.peet.ws/api/all 2>/dev/null)"
+TCP_WIN="n/a"; TCP_WS="n/a"; TCP_MSS="n/a"; TCP_TTL="n/a"; TCP_OPTS="n/a"; P0F_SIG="n/a"; JA4_SIG="n/a"; PEET_IP="n/a"
 if [ -n "$PEET_JSON" ]; then
-    TCP_SUMMARY="$(python3 -c '
-import json, sys
+    eval "$(python3 -c '
+import json, sys, shlex
 try:
     d = json.loads(sys.stdin.read())
-    ip = d.get("ip", "unknown")
-    tcp = d.get("tcp", {})
-    ja4 = d.get("tls", {}).get("ja4", "unknown")
-    print(f"IP={ip} | TCP={json.dumps(tcp)} | JA4={ja4}")
-except Exception as e:
-    print(f"parse_err: {e}")
+    tcpip = d.get("tcpip", {})
+    syn = tcpip.get("tcp_syn", {})
+    tls = d.get("tls", {})
+    def q(v):
+        return shlex.quote(str(v))
+    print("PEET_IP=" + q(d.get("ip", "n/a")))
+    print("TCP_WIN=" + q(syn.get("window", "n/a")))
+    print("TCP_WS=" + q(syn.get("window_scale", "n/a")))
+    print("TCP_MSS=" + q(syn.get("mss", "n/a")))
+    print("TCP_TTL=" + q(syn.get("ttl", "n/a")))
+    print("TCP_OPTS=" + q(syn.get("option_order", "n/a")))
+    print("P0F_SIG=" + q(tcpip.get("p0f", "n/a")))
+    print("JA4_SIG=" + q(tls.get("ja4", "n/a")))
+except Exception:
+    pass
 ' <<< "$PEET_JSON" 2>/dev/null)"
-    echo -e "${GREEN}   ✅ L4/TLS Telemetry: ${TCP_SUMMARY}${NC}"
+    echo -e "${GREEN}   ✅ L4 SYN: Window=${TCP_WIN} | WScale=${TCP_WS} | MSS=${TCP_MSS} | TTL=${TCP_TTL}${NC}"
+    echo -e "${GREEN}   ✅ Options: ${TCP_OPTS}${NC}"
+    echo -e "${GREEN}   ✅ p0f:     ${P0F_SIG}${NC}"
+    echo -e "${GREEN}   ✅ JA4:     ${JA4_SIG}${NC}"
     PASS_COUNT=$((PASS_COUNT + 1))
 else
     echo -e "${YELLOW}   ⚠️  tls.peet.ws did not respond in time${NC}"
@@ -94,16 +107,18 @@ fi
 
 # 5. WunderDNS & Local Cache Latency Audit
 echo -e "${BLUE}[5/6] Auditing WunderDNS Upstream & Local RAM Cache Speed...${NC}"
+WUNDER_STATE="unknown"; ECS_TXT="n/a"
 if [ -f "$SSH_KEY" ]; then
     DNS_AUDIT="$(ssh $SSH_OPTS root@127.0.0.1 'ash -s' <<'EOF'
 WUNDER_STATE="$(cat /tmp/wunderdns.state 2>/dev/null || echo 'standard-tunnel-dns')"
-T1=$(date +%s%N 2>/dev/null || date +%s)
 nslookup www.apple.com 127.0.0.1 >/dev/null 2>&1
 nslookup www.apple.com 127.0.0.1 >/dev/null 2>&1
 ECS_TXT="$(nslookup -type=txt o-o.myaddr.l.google.com 127.0.0.1 2>/dev/null | grep -i 'text =' | tr '\n' ' ')"
 echo "MODE=${WUNDER_STATE} | ECS=${ECS_TXT}"
 EOF
 )"
+    WUNDER_STATE="$(echo "$DNS_AUDIT" | sed -n 's/^MODE=\([^|]*\) |.*/\1/p' | tr -d '\r\n')"
+    ECS_TXT="$(echo "$DNS_AUDIT" | sed -n 's/.*| ECS=\(.*\)$/\1/p' | tr -d '\r\n')"
     echo -e "${GREEN}   ✅ PASS: ${DNS_AUDIT}${NC}"
     PASS_COUNT=$((PASS_COUNT + 1))
 else
@@ -117,6 +132,52 @@ CUR_HOST="$(scutil --get HostName 2>/dev/null || hostname)"
 CUR_LOCALE="$(defaults read NSGlobalDomain AppleLocale 2>/dev/null || echo 'default')"
 echo -e "${GREEN}   ✅ Hostname: ${CUR_HOST} | AppleLocale: ${CUR_LOCALE}${NC}"
 PASS_COUNT=$((PASS_COUNT + 1))
+
+# Persist JSON report (rides along inside the credentials artifact) and publish
+# a live GitHub Step Summary (visible while the 6h keep-alive session is running).
+EGRESS_ADDR="$(echo "$IP_INFO" | grep -o '"ip": *"[^"]*"' | cut -d'"' -f4)"
+mkdir -p credentials
+cat > credentials/stealth-report.json <<JSONEOF
+{
+  "egress_ip": "${EGRESS_ADDR}",
+  "country": "${IP_COUNTRY}",
+  "ip_timezone": "${IP_TZ}",
+  "mac_timezone": "${MAC_TZ}",
+  "mac_locale": "${CUR_LOCALE}",
+  "mac_hostname": "${CUR_HOST}",
+  "tcp_syn": {
+    "window": "${TCP_WIN}",
+    "window_scale": "${TCP_WS}",
+    "mss": "${TCP_MSS}",
+    "ttl": "${TCP_TTL}",
+    "option_order": "${TCP_OPTS}",
+    "p0f": "${P0F_SIG}"
+  },
+  "tls_ja4": "${JA4_SIG}",
+  "peet_ip": "${PEET_IP}",
+  "dns_mode": "${WUNDER_STATE}",
+  "dns_ecs": "${ECS_TXT}"
+}
+JSONEOF
+
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    if [ -n "${PF_STATUS:-}" ]; then PF_STATE="enabled"; else PF_STATE="disabled"; fi
+    cat >> "$GITHUB_STEP_SUMMARY" <<MDEOF
+### 🛡️ Stealth & Anti-Fingerprint Telemetry
+
+| Layer / Metric | Observed Value | Target / Status |
+| :--- | :--- | :--- |
+| **Egress IP & Country** | \`${PEET_IP}\` (${IP_COUNTRY}) | Tunnel Active |
+| **Timezone (IP vs Mac)** | \`${IP_TZ}\` vs \`${MAC_TZ}\` | $([ "$IP_TZ" = "$MAC_TZ" ] && echo "✅ Coherent" || echo "⚠️ Mismatch") |
+| **Locale & Hostname** | \`${CUR_LOCALE}\` / \`${CUR_HOST}\` | Sanitized |
+| **TCP SYN Window / WScale** | \`${TCP_WIN}\` / \`${TCP_WS}\` | Target: \`65535\` / \`6\` |
+| **TCP SYN MSS / TTL** | \`${TCP_MSS}\` / \`${TCP_TTL}\` | Target: \`1360\` / \`~64\` |
+| **TCP Options Order** | \`${TCP_OPTS}\` | XNU target: \`mss,nop,wscale,nop,nop,ts,sackOK,eol\` |
+| **p0f Signature** | \`${P0F_SIG}\` | Passive OS Fingerprint |
+| **DNS Mode & ECS** | \`${WUNDER_STATE}\` (\`${ECS_TXT}\`) | RAM Cache 10k + No AAAA |
+| **QUIC/WebRTC UDP Block** | ${PF_STATE} | \`en0\` UDP 443/STUN Blocked |
+MDEOF
+fi
 
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

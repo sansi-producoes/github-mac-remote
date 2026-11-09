@@ -21,6 +21,8 @@ on:
           - '14'
           - '15'
           - '26'
+          - '26-intel'
+          - '27'
       max_chains:
         description: 'Maximum number of chains'
         required: true
@@ -77,7 +79,7 @@ env:
 jobs:
   extended-session:
     name: 🔗 Extended Session (macOS ${{ github.event.inputs.macos_version }}, Chain ${{ github.event.inputs.current_chain }}/${{ github.event.inputs.max_chains }})
-    runs-on: ${{ github.event.inputs.runner_size == 'xlarge' && format('macos-{0}-xlarge', github.event.inputs.macos_version) || github.event.inputs.runner_size == 'large' && format('macos-{0}-large', github.event.inputs.macos_version) || format('macos-{0}', github.event.inputs.macos_version) }}
+    runs-on: ${{ github.event.inputs.macos_version == '27' && 'xcode-27' || github.event.inputs.runner_size == 'xlarge' && format('macos-{0}-xlarge', github.event.inputs.macos_version) || github.event.inputs.runner_size == 'large' && format('macos-{0}-large', github.event.inputs.macos_version) || format('macos-{0}', github.event.inputs.macos_version) }}
     timeout-minutes: 375
     
     steps:

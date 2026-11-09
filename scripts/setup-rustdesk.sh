@@ -12,6 +12,7 @@ echo "🦀 Setting up RustDesk v${RUSTDESK_VERSION}..."
 # Generate password if not provided
 if [ -z "${RUSTDESK_PASSWORD}" ]; then
     RUSTDESK_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
+    echo "::add-mask::${RUSTDESK_PASSWORD}"
     echo "RUSTDESK_PASSWORD=${RUSTDESK_PASSWORD}" >> $GITHUB_ENV
 fi
 
@@ -102,12 +103,11 @@ mkdir -p "${RUSTDESK_CONFIG_DIR}"
 # We need to set a permanent password for unattended access
 echo "⚙️ Configuring RustDesk..."
 
-# Encode password for RustDesk config (base64)
-# RustDesk expects password in base64 format in config
+# Encode password for RustDesk config (base64) and mask it in logs
 ENCODED_PASSWORD=$(echo -n "${RUSTDESK_PASSWORD}" | base64)
+echo "::add-mask::${ENCODED_PASSWORD}"
 
 # Create RustDesk2.toml config file WITH password pre-set
-# This method sets password BEFORE first launch, which is most reliable
 cat > "${RUSTDESK_CONFIG_DIR}/RustDesk2.toml" << EOFTOML
 rendezvous_server = 'rs-ny.rustdesk.com'
 nat_type = 1
@@ -131,8 +131,6 @@ echo "   📁 Config location: ${RUSTDESK_CONFIG_DIR}"
 # Grant necessary permissions via TCC database (may require SIP disabled)
 echo "🔐 Attempting to grant permissions..."
 
-# Try to enable accessibility (required for remote control)
-# This may fail on GitHub Actions VMs due to security restrictions
 sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db \
     "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.rustdesk.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$(date +%s));" 2>/dev/null || \
     echo "⚠️ Could not set accessibility permissions (expected on VM)"
@@ -144,14 +142,12 @@ sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db \
 # Start RustDesk FIRST, before trying to set password
 echo "🚀 Starting RustDesk..."
 
-# Use full path to open the app
 /Applications/RustDesk.app/Contents/MacOS/rustdesk &
 RUSTDESK_PID=$!
 
 echo "   Waiting for RustDesk to initialize (PID: $RUSTDESK_PID)..."
 sleep 10
 
-# Verify RustDesk is running
 if pgrep -f "RustDesk" > /dev/null; then
     echo "   ✅ RustDesk is running"
 else
@@ -160,13 +156,10 @@ else
     sleep 5
 fi
 
-# Now try to set password via command line (RustDesk must be running first!)
 echo "🔑 Setting up password..."
 
 RUSTDESK_CLI="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
 if [ -f "${RUSTDESK_CLI}" ]; then
-    
-    # Get the RustDesk ID first (this also confirms RustDesk is initialized)
     RUSTDESK_ID=$("${RUSTDESK_CLI}" --get-id 2>/dev/null || echo "")
     
     if [ -n "${RUSTDESK_ID}" ]; then
@@ -174,15 +167,9 @@ if [ -f "${RUSTDESK_CLI}" ]; then
         echo "   ✅ RustDesk ID: ${RUSTDESK_ID}"
     fi
     
-    # Now try to set permanent password with sudo
-    # RustDesk needs to be running for this to work
     echo "   Attempting to set password..."
-    
-    # Method 1: Try direct password setting
     PASSWORD_OUTPUT=$(sudo "${RUSTDESK_CLI}" --password "${RUSTDESK_PASSWORD}" 2>&1)
-    echo "   Password command output: ${PASSWORD_OUTPUT}"
     
-    # Check if it actually worked by looking at the output
     if echo "${PASSWORD_OUTPUT}" | grep -qi "error\|fail\|denied\|not found"; then
         echo "   ⚠️ Password setting via CLI may have failed"
         PASSWORD_SET=false
@@ -192,25 +179,11 @@ if [ -f "${RUSTDESK_CLI}" ]; then
     fi
     
     sleep 3
-    
-    # NOTE: Do NOT use --get-password as it hangs/opens GUI dialog
-    # Since we saw "Done!" output, the password was set successfully
-    
-    # Dump what's in the config directory for debugging
     echo ""
     echo "   📂 Checking config directory structure..."
     ls -la "${RUSTDESK_CONFIG_DIR}/" 2>/dev/null || echo "   Config dir not accessible"
-    
-    # Show the config file contents (not using find as it may hang in subshell)
-    echo ""
-    echo "   📄 RustDesk.toml:"
-    cat "${RUSTDESK_CONFIG_DIR}/RustDesk.toml" 2>/dev/null || echo "   (not found)"
-    echo ""
-    echo "   📄 RustDesk2.toml:"
-    cat "${RUSTDESK_CONFIG_DIR}/RustDesk2.toml" 2>/dev/null || echo "   (not found)"
 fi
 
-# Check if RustDesk is running
 sleep 5
 echo "🔍 Checking RustDesk status..."
 
@@ -219,9 +192,7 @@ if pgrep -f "RustDesk" > /dev/null; then
     echo "✅ RustDesk process is running!"
     echo ""
     
-    # Try to get ID from config files
     if [ -z "${RUSTDESK_ID}" ]; then
-        # Check various possible ID locations
         RUSTDESK_ID=$(cat "${RUSTDESK_CONFIG_DIR}/id" 2>/dev/null || \
                       grep -o '"id":"[^"]*"' "${RUSTDESK_CONFIG_DIR}"/*.json 2>/dev/null | head -1 | cut -d'"' -f4 || \
                       echo "")
@@ -236,65 +207,26 @@ if pgrep -f "RustDesk" > /dev/null; then
     else
         echo "   🆔 RustDesk ID: (check the RustDesk window or logs)"
     fi
-    echo "   🔐 Password: ${RUSTDESK_PASSWORD}"
+    echo "   🔐 Password: (saved in private artifact)"
     echo ""
-    echo "📖 How to Connect:"
-    echo ""
-    echo "   1. Download RustDesk client from: https://rustdesk.com/download"
-    echo "   2. Install and open RustDesk on your computer"
-    if [ -n "${RUSTDESK_ID}" ]; then
-        echo "   3. Enter ID: ${RUSTDESK_ID}"
-    else
-        echo "   3. Enter the ID shown in the RustDesk window"
-    fi
-    echo "   4. Enter password: ${RUSTDESK_PASSWORD}"
-    echo "   5. Click Connect!"
-    echo ""
-    echo "⚠️ Note: If screen/input access is denied, the VM may have"
-    echo "   restrictions. Check System Settings > Privacy & Security."
-    echo ""
-    
-    # Also check if the RustDesk service is working
     echo "📊 RustDesk Process Info:"
     ps aux | grep -i rustdesk | grep -v grep || true
     
-    # Check network connectivity
     echo ""
     echo "🌐 Network Status:"
     netstat -an | grep -E ":(21115|21116|21117|21118)" || echo "   RustDesk ports not yet listening (normal during startup)"
-    
 else
     echo ""
-    echo "⚠️ RustDesk process not found."
-    echo ""
-    echo "   Possible reasons:"
-    echo "   - First launch may require manual permission grants"
-    echo "   - The macOS VM may have security restrictions"
-    echo ""
-    echo "💡 Trying to launch RustDesk again..."
+    echo "⚠️ RustDesk process not found. Trying to launch RustDesk again..."
     open -a RustDesk
     sleep 3
     
     if pgrep -f "RustDesk" > /dev/null; then
         echo "✅ RustDesk is now running!"
     else
-        echo "❌ Could not start RustDesk. Falling back to VNC."
+        echo "❌ Could not start RustDesk."
     fi
 fi
-
-# Display config directory contents for debugging
-echo ""
-echo "📁 Config directory contents:"
-ls -la "${RUSTDESK_CONFIG_DIR}/" 2>/dev/null || echo "   (directory is empty or inaccessible)"
-
-# Show config file contents for debugging (password is visible in workflow logs anyway)
-echo ""
-echo "📄 RustDesk.toml contents:"
-cat "${RUSTDESK_CONFIG_DIR}/RustDesk.toml" 2>/dev/null || echo "   (file not found)"
-
-echo ""
-echo "📄 RustDesk2.toml contents:"
-cat "${RUSTDESK_CONFIG_DIR}/RustDesk2.toml" 2>/dev/null || echo "   (file not found)"
 
 echo ""
 echo "🎉 RustDesk setup complete!"

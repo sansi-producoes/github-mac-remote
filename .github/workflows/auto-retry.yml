@@ -1,10 +1,13 @@
 name: RustDesk Auto-Retry Watchdog
 
-# During hosted macOS runner shortages (queue auto-cancel after 15 minutes with no
-# runner), this watchdog re-dispatches a fresh macOS 26 session until one sticks.
-# Kill-switch: Settings -> Secrets and variables -> Actions -> Variables:
-#   SESSION_AUTORETRY = "true"  -> watchdog armed
-#   SESSION_AUTORETRY = "false" -> watchdog sleeps
+# Pool-keeper: maintains a pool of N queued macOS 26 "lottery tickets" while the
+# hosted runner pools are short on capacity. Queued jobs cost nothing; the first
+# ticket that gets picked becomes the live session, and the remaining queued
+# siblings get cancelled automatically so only one session burns minutes.
+#
+# Controls (Settings -> Secrets and variables -> Actions -> Variables):
+#   SESSION_AUTORETRY = "true"/"false"  -> master switch
+#   SESSION_POOL_SIZE = "1".."8"        -> tickets kept in the queue (default 5)
 on:
   schedule:
     - cron: "*/20 * * * *"
@@ -20,33 +23,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Ensure a macOS 26 session exists
+      - name: Keep the macOS 26 ticket pool topped up
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POOL_SIZE: ${{ vars.SESSION_POOL_SIZE || '5' }}
         run: |
           set -eu
           REPO="$GITHUB_REPOSITORY"
-          ACTIVE=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 10 \
-            --json status,createdAt \
-            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')
-          RECENT=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 10 \
-            --json status,createdAt \
-            --jq '[.[] | select((now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdate)) < 990)] | length')
-          echo "ACTIVE_SESSIONS=$ACTIVE RECENT_ATTEMPTS=$RECENT"
-          if [ "$ACTIVE" -gt 0 ]; then
-            echo "Session alive - watchdog idle."
+          WANT="$(printf '%s' "$POOL_SIZE" | tr -dc '0-9')"
+          [ -n "$WANT" ] || WANT=5
+          [ "$WANT" -lt 1 ] && WANT=1
+          [ "$WANT" -gt 8 ] && WANT=8
+
+          QUEUED_IDS=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 15 \
+            --json status,databaseId \
+            --jq '[.[] | select(.status == "queued") | .databaseId]')
+          LIVE=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 15 \
+            --json status \
+            --jq '[.[] | select(.status == "in_progress")] | length')
+
+          if [ "$LIVE" -gt 0 ]; then
+            echo "A session is live - cancelling queued siblings so only one burns minutes."
+            echo "$QUEUED_IDS" | jq -r '.[]' | while read -r id; do
+              gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
+              echo "CANCELLED $id"
+            done
             exit 0
           fi
-          if [ "$RECENT" -gt 0 ]; then
-            echo "Attempt dispatched less than 16.5 min ago - waiting for next cycle."
+
+          ACTIVE=$(echo "$QUEUED_IDS" | jq 'length')
+          echo "LIVE=0 QUEUED=$ACTIVE WANT=$WANT"
+          if [ "$ACTIVE" -ge "$WANT" ]; then
+            echo "Pool already topped up - idle."
             exit 0
           fi
-          echo "No live session - dispatching macOS 26 / 6h now."
-          gh workflow run rustdesk-session.yml --repo "$REPO" \
-            -f duration=6 \
-            -f macos_version=26 \
-            -f runner_size=standard \
-            -f unique_ip=false \
-            -f openwrt_exit=true \
-            -f gcp_egress=true
-          echo WATCHDOG_DISPATCHED
+          NEEDED=$((WANT - ACTIVE))
+          echo "Dispatching $NEEDED extra ticket(s)."
+          i=0
+          while [ "$i" -lt "$NEEDED" ]; do
+            gh workflow run rustdesk-session.yml --repo "$REPO" \
+              -f duration=6 \
+              -f macos_version=26 \
+              -f runner_size=standard \
+              -f unique_ip=false \
+              -f openwrt_exit=true \
+              -f gcp_egress=true
+            i=$((i+1))
+            sleep 5
+          done
+          echo "POOL_TOPPED_UP +$NEEDED"

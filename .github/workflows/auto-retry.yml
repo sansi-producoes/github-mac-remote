@@ -1,0 +1,52 @@
+name: RustDesk Auto-Retry Watchdog
+
+# During hosted macOS runner shortages (queue auto-cancel after 15 minutes with no
+# runner), this watchdog re-dispatches a fresh macOS 26 session until one sticks.
+# Kill-switch: Settings -> Secrets and variables -> Actions -> Variables:
+#   SESSION_AUTORETRY = "true"  -> watchdog armed
+#   SESSION_AUTORETRY = "false" -> watchdog sleeps
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  watchdog:
+    if: vars.SESSION_AUTORETRY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Ensure a macOS 26 session exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          REPO="$GITHUB_REPOSITORY"
+          ACTIVE=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 10 \
+            --json status,createdAt \
+            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')
+          RECENT=$(gh run list --repo "$REPO" --workflow rustdesk-session.yml --limit 10 \
+            --json status,createdAt \
+            --jq '[.[] | select((now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdate)) < 990)] | length')
+          echo "ACTIVE_SESSIONS=$ACTIVE RECENT_ATTEMPTS=$RECENT"
+          if [ "$ACTIVE" -gt 0 ]; then
+            echo "Session alive - watchdog idle."
+            exit 0
+          fi
+          if [ "$RECENT" -gt 0 ]; then
+            echo "Attempt dispatched less than 16.5 min ago - waiting for next cycle."
+            exit 0
+          fi
+          echo "No live session - dispatching macOS 26 / 6h now."
+          gh workflow run rustdesk-session.yml --repo "$REPO" \
+            -f duration=6 \
+            -f macos_version=26 \
+            -f runner_size=standard \
+            -f unique_ip=false \
+            -f openwrt_exit=true \
+            -f gcp_egress=true
+          echo WATCHDOG_DISPATCHED

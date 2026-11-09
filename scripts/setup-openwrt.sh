@@ -450,7 +450,7 @@ fi
 
 ip link del wg0 2>/dev/null
 ip link add dev wg0 type wireguard
-ip link set mtu 1280 dev wg0
+ip link set mtu 1440 dev wg0
 wg set wg0 peer "$WG_SERVER_PUBLIC_KEY" endpoint "${WG_ENDPOINT}:${WG_ENDPOINT_PORT}" allowed-ips 0.0.0.0/0 persistent-keepalive 25
 
 # Pick a random start so concurrent sessions rarely contend for the same
@@ -491,15 +491,15 @@ if ! wg show wg0 2>/dev/null | grep -q 'listening port'; then
 fi
 ip route replace default via 10.66.0.1 dev wg0
 
-# MSS clamp to fit the WireGuard tunnel (MTU 1280). Trade-off, documented:
-# p0f reads MSS=1240 from SYN options and maps it to a tunnel/VPN profile.
-# Fine to keep today because path-MTU is mandatory on this transport; the
-# region tell is weaker than the L7 story on top of it.
+# MSS clamp sized for a native-looking p0f profile. Inner MTU 1440 + 60
+# bytes of WireGuard overhead = 1500 on the wire, so DF survives unfragmented;
+# p0f reads MSS=1400 and maps it to ~1440 MTU (PPPoE/ADSL-shape link, common
+# in BR) instead of the canonical 1280 that screams "tunnel".
 nft add table inet mssclamp 2>/dev/null
 nft add chain inet mssclamp output '{ type filter hook output priority mangle; policy accept; }' 2>/dev/null
 nft add chain inet mssclamp forward '{ type filter hook forward priority mangle; policy accept; }' 2>/dev/null
-nft add rule inet mssclamp output tcp flags syn / syn,rst tcp option maxseg size set 1240
-nft add rule inet mssclamp forward tcp flags syn / syn,rst tcp option maxseg size set 1240
+nft add rule inet mssclamp output tcp flags syn / syn,rst tcp option maxseg size set 1400
+nft add rule inet mssclamp forward tcp flags syn / syn,rst tcp option maxseg size set 1400
 
 # Coherent DNS: with the default route pinned to wg0, the exit is GCP
 # (Brazil), so dnsmasq must NOT keep forwarding to the runner's DHCP

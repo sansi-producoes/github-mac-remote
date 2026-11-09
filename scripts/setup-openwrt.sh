@@ -717,11 +717,14 @@ SOCKS5_PASS="${SOCKS5_PASS:-}"
 
 if [ -n "$WG_CLIENT_SLOTS_B64" ] && [ -n "$WG_SERVER_PUBLIC_KEY" ]; then
     echo -e "${BLUE}🛣  Configuring OpenWrt WireGuard Router + Trinity L4 + WunderDNS...${NC}"
+    # Decode the slot pool on the HOST (macOS base64 is always present; some OpenWrt
+    # busybox builds ship without the base64 applet, which killed the tunnel in-VM).
+    WG_CLIENT_SLOTS_PLAIN=$(printf '%s' "$WG_CLIENT_SLOTS_B64" | base64 -D 2>/dev/null || printf '%s' "$WG_CLIENT_SLOTS_B64" | base64 -d)
     ssh $SSH_OPTS root@127.0.0.1 "cat > /tmp/wg.env" <<WGENV
 WG_ENDPOINT=${WG_ENDPOINT}
 WG_ENDPOINT_PORT=${WG_ENDPOINT_PORT}
 WG_SERVER_PUBLIC_KEY=${WG_SERVER_PUBLIC_KEY}
-WG_CLIENT_SLOTS_B64=${WG_CLIENT_SLOTS_B64}
+WG_CLIENT_SLOTS=${WG_CLIENT_SLOTS_PLAIN}
 SOCKS5_HOST=${SOCKS5_HOST}
 SOCKS5_PORT=${SOCKS5_PORT}
 SOCKS5_USER=${SOCKS5_USER}
@@ -732,7 +735,6 @@ set +e
 . /tmp/wg.env
 rm -f /tmp/wg.env
 
-WG_CLIENT_SLOTS=$(printf '%s' "$WG_CLIENT_SLOTS_B64" | base64 -d)
 SLOTS_N=$(printf '%s\n' "$WG_CLIENT_SLOTS" | grep -c .)
 if [ -z "$WG_CLIENT_SLOTS" ] || [ "$SLOTS_N" -lt 1 ]; then
     echo NO_SLOTS

@@ -365,7 +365,7 @@ echo -e "${BLUE}📦 Provisioning OpenWrt packages + Trinity TCP tuning + Wunder
 ssh $SSH_OPTS root@127.0.0.1 'ash -s' <<'REMOTE'
 set +e
 opkg update
-opkg install tinyproxy microsocks wireguard-tools kmod-wireguard python3-light
+opkg install tinyproxy microsocks wireguard-tools kmod-wireguard python3-light ip-full
 
 # --- TRINITY L4 TCP STACK TUNING ---
 # Forces the Linux TCP state machine to natively select WScale=6 and Window=65535
@@ -787,7 +787,7 @@ if ! wg show wg0 2>/dev/null | grep -q 'listening port'; then
 fi
 
 # Set default route with initrwnd 64 so Linux TCP SYN advertises Window=65535 (matching macOS XNU)
-ip route replace default via 10.66.0.1 dev wg0 initcwnd 10 initrwnd 64
+ip route replace default via 10.66.0.1 dev wg0 initcwnd 10 initrwnd 64 advmss 1360
 
 # Trinity L4:
 # 1. Set TTL=65 on wg0 egress so after GCP VM decrements 1 hop on forwarding,

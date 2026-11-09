@@ -983,6 +983,21 @@ sudo scutil --set HostName "MacBook-Pro" 2>/dev/null || true
 sudo scutil --set LocalHostName "MacBook-Pro" 2>/dev/null || true
 sudo scutil --set ComputerName "MacBook Pro" 2>/dev/null || true
 
+# --- WEBKIT SOFTWARE RENDER FALLBACK (Safari 26.2+ / 27 GPU compositing blank-page bug) ---
+# Field-tested fix (Argon): forces WebKit to rasterize via CPU, restoring page
+# rendering on macOS 26.2+/27 builds where GPU-accelerated compositing dies and
+# Safari/BlackBird show blank pages with no error. Also makes canvas output
+# deterministic (no GPU-driver variance across hosted runners).
+killall Safari 2>/dev/null
+for dom in com.apple.Safari com.apple.Safari.SandboxBroker NSGlobalDomain; do
+    defaults write "$dom" WebKitPreferences.acceleratedDrawingEnabled -bool false 2>/dev/null || true
+    defaults write "$dom" WebKitPreferences.canvasUsesAcceleratedDrawing -bool false 2>/dev/null || true
+    defaults write "$dom" WebKit2AcceleratedDrawingEnabled -bool false 2>/dev/null || true
+    defaults write "$dom" WebKit2GPURenderEnabled -bool false 2>/dev/null || true
+    defaults write "$dom" IncludeDevelopMenu -bool true 2>/dev/null || true
+    defaults write "$dom" WebKitDeveloperExtrasEnabledPreferenceKey -bool true 2>/dev/null || true
+done
+
 # --- BLOCK QUIC (UDP/443) & WEBRTC STUN LEAKS ON MACOS HOST ---
 echo -e "${BLUE}🛡️  Hardening macOS Browser Policies & pfctl Firewall against UDP/QUIC/WebRTC leaks...${NC}"
 for domain in com.google.Chrome org.chromium.Chromium com.brave.Browser com.microsoft.edgemac; do

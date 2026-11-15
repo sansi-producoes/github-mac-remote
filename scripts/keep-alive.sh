@@ -14,6 +14,22 @@ DURATION_SECONDS=$((DURATION_HOURS * 3600))
 START_TIME=$(date +%s)
 END_TIME=$((START_TIME + DURATION_SECONDS))
 
+# RustDesk watchdog: the remote user gets frozen out when the host app dies.
+# Each keep-alive cycle checks the process and respawns it if it crashed.
+ensure_rustdesk() {
+    if ! pgrep -f "RustDesk.app/Contents/MacOS/RustDesk" >/dev/null 2>&1; then
+        echo ""
+        echo "🔄 RustDesk died — respawning at $(date '+%H:%M:%S')"
+        open -a RustDesk 2>/dev/null || /Applications/RustDesk.app/Contents/MacOS/rustdesk >/dev/null 2>&1 &
+        sleep 5
+        if pgrep -f "RustDesk.app/Contents/MacOS/RustDesk" >/dev/null 2>&1; then
+            echo "🔄 RustDesk respawned OK"
+        else
+            echo "⚠️ RustDesk respawn attempt failed"
+        fi
+    fi
+}
+
 echo ""
 echo "⏱️  Session keep-alive started"
 echo "   Duration: ${DURATION_HOURS} hour(s)"
@@ -35,6 +51,9 @@ while true; do
         break
     fi
     
+    # RustDesk watchdog: respawn the remote-access app if it crashed
+    ensure_rustdesk
+
     # Calculate human-readable time
     HOURS=$((REMAINING / 3600))
     MINUTES=$(((REMAINING % 3600) / 60))

@@ -163,6 +163,11 @@ jobs:
           chmod +x scripts/install-parsec.sh
           ./scripts/install-parsec.sh
 
+      - name: 🔐 Install BlackBird Browser (anti-detect, preinstalled)
+        run: |
+          chmod +x scripts/setup-blackbird.sh
+          ./scripts/setup-blackbird.sh
+
       - name: 🦀 Setup RustDesk
         id: rustdesk
         run: |
